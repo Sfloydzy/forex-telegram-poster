@@ -290,6 +290,23 @@ def escape_html(s: str) -> str:
 # ------------------------------ telegram -------------------------------------
 
 
+def write_step_summary(markdown: str) -> None:
+    """Append a Markdown block to GitHub Actions' step summary, if available.
+
+    GitHub sets $GITHUB_STEP_SUMMARY to a file path in CI. Locally it's unset
+    and this is a no-op.
+    """
+    path = os.environ.get("GITHUB_STEP_SUMMARY")
+    if not path:
+        return
+    try:
+        with open(path, "a", encoding="utf-8") as f:
+            f.write(markdown.rstrip() + "\n\n")
+    except OSError:
+        # Don't fail the run over a logging issue.
+        pass
+
+
 def send_to_telegram(message: str, cfg: dict[str, Any]) -> dict[str, Any]:
     url = f"https://api.telegram.org/bot{cfg['telegram_bot_token']}/sendMessage"
     resp = requests.post(
@@ -323,11 +340,15 @@ def main() -> None:
     rows = fetch_rows(cfg)
     if not rows:
         print("No data rows found in sheet. Nothing to post.")
+        write_step_summary("### \u26A0\uFE0F Skipped \u2014 sheet is empty (no data rows)")
         return
 
     rows, today = filter_to_today(rows, cfg)
     if not rows:
         print(f"No rows for today ({today.isoformat()}). Nothing to post.")
+        write_step_summary(
+            f"### \u26A0\uFE0F Skipped \u2014 no rows for today ({today.isoformat()})"
+        )
         return
 
     top_rows = select_top(rows, top_n)
@@ -337,11 +358,20 @@ def main() -> None:
         print("---- DRY RUN ----")
         print(message)
         print("---- END ----")
+        write_step_summary(
+            f"### \U0001F9EA Dry run \u2014 would post top {len(top_rows)} for {today.isoformat()}"
+        )
         return
 
     result = send_to_telegram(message, cfg)
     msg_id = result.get("result", {}).get("message_id")
     print(f"Posted successfully. message_id={msg_id}")
+    write_step_summary(
+        "### \u2705 Posted to Telegram\n"
+        f"- **Date:** {today.isoformat()}\n"
+        f"- **Rows posted:** {len(top_rows)}\n"
+        f"- **Message ID:** {msg_id}"
+    )
 
 
 if __name__ == "__main__":
