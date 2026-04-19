@@ -1,0 +1,9 @@
+{
+  "telegram_bot_token": "123456789:ABCDEF_your_bot_token_here",
+  "telegram_chat_id": "@your_channel_username_or_-1001234567890",
+  "google_sheet_id": "1AbCdEfGhIjKlMnOpQrStUvWxYz_copy_from_sheet_url",
+  "google_sheet_tab": "Sheet1",
+  "service_account_path": "./service_account.json",
+  "top_n": 5,
+  "channel_title": "Top Forex Copiers"
+}
