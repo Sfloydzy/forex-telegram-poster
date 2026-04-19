@@ -12,7 +12,7 @@ on:
       top_n:
         description: "How many top copiers to post (overrides default)"
         required: false
-        default: "10"
+        default: "5"
       dry_run:
         description: "Print the message without posting (true/false)"
         required: false
@@ -50,7 +50,7 @@ jobs:
           GOOGLE_SHEET_ID: ${{ secrets.GOOGLE_SHEET_ID }}
           GOOGLE_SHEET_TAB: ${{ secrets.GOOGLE_SHEET_TAB }}
           GOOGLE_SERVICE_ACCOUNT_JSON: ${{ secrets.GOOGLE_SERVICE_ACCOUNT_JSON }}
-          TOP_N: ${{ github.event.inputs.top_n || '10' }}
+          TOP_N: ${{ github.event.inputs.top_n || '5' }}
           CHANNEL_TITLE: "Top Forex Copiers"
         run: |
           if [ "${{ github.event.inputs.dry_run }}" = "true" ]; then

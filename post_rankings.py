@@ -22,7 +22,7 @@ import argparse
 import json
 import os
 import sys
-from datetime import datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
@@ -32,13 +32,17 @@ from google.oauth2.service_account import Credentials
 
 CONFIG_PATH = Path(__file__).with_name("config.json")
 
+# Default to Singapore time so "today" matches the 08:00 SGT daily schedule,
+# regardless of where the runner clock is. Override via config.
+DEFAULT_TZ_OFFSET_HOURS = 8
+
 SCOPES = [
     "https://www.googleapis.com/auth/spreadsheets.readonly",
     "https://www.googleapis.com/auth/drive.readonly",
 ]
 
-# Expected column headers in the sheet (case-insensitive match).
-EXPECTED_COLUMNS = {
+# Required column headers in the sheet (case-insensitive match).
+REQUIRED_COLUMNS = {
     "rank":         ["rank", "#"],
     "copier":       ["copier", "name", "trader"],
     "net_pnl":      ["net p&l ($)", "net p&l", "pnl", "p&l", "profit"],
@@ -46,6 +50,11 @@ EXPECTED_COLUMNS = {
     "wins":         ["wins", "won"],
     "losses":       ["losses", "lost"],
     "total_trades": ["total trades", "trades", "total"],
+}
+
+# Optional columns — if the sheet has these, the script will use them.
+OPTIONAL_COLUMNS = {
+    "date":         ["date", "day"],
 }
 
 
@@ -144,18 +153,57 @@ def fetch_rows(cfg: dict[str, Any]) -> list[dict[str, Any]]:
 def _map_headers(header: list[str]) -> dict[str, int]:
     lowered = [h.lower().strip() for h in header]
     mapping: dict[str, int] = {}
-    for canonical, aliases in EXPECTED_COLUMNS.items():
+    all_columns = {**REQUIRED_COLUMNS, **OPTIONAL_COLUMNS}
+    for canonical, aliases in all_columns.items():
         for alias in aliases:
             if alias in lowered:
                 mapping[canonical] = lowered.index(alias)
                 break
-    missing = [c for c in EXPECTED_COLUMNS if c not in mapping]
+    missing = [c for c in REQUIRED_COLUMNS if c not in mapping]
     if missing:
         sys.exit(
-            f"Sheet is missing expected columns: {', '.join(missing)}. "
+            f"Sheet is missing required columns: {', '.join(missing)}. "
             f"Found headers: {header}"
         )
     return mapping
+
+
+def _parse_date(s: str) -> date | None:
+    """Tolerant date parser. Returns None if no known format matches."""
+    s = (s or "").strip()
+    if not s:
+        return None
+    for fmt in (
+        "%Y-%m-%d", "%Y/%m/%d",
+        "%d/%m/%Y", "%m/%d/%Y",
+        "%d-%m-%Y", "%m-%d-%Y",
+        "%b %d, %Y", "%B %d, %Y",
+        "%d %b %Y", "%d %B %Y",
+    ):
+        try:
+            return datetime.strptime(s, fmt).date()
+        except ValueError:
+            continue
+    return None
+
+
+def filter_to_today(rows: list[dict[str, Any]], cfg: dict[str, Any]) -> tuple[list[dict[str, Any]], date]:
+    """If a date column is present, keep only rows whose date matches 'today'
+    in the configured timezone. Returns (filtered_rows, today_date)."""
+    offset_h = cfg.get("timezone_offset_hours", DEFAULT_TZ_OFFSET_HOURS)
+    tz = timezone(timedelta(hours=offset_h))
+    today = datetime.now(tz).date()
+
+    if not rows or "date" not in rows[0]:
+        # No date column in sheet — leave rows unfiltered.
+        return rows, today
+
+    filtered = []
+    for r in rows:
+        parsed = _parse_date(r.get("date", ""))
+        if parsed == today:
+            filtered.append(r)
+    return filtered, today
 
 
 def _to_number(s: str) -> float:
@@ -184,14 +232,23 @@ def select_top(rows: list[dict[str, Any]], top_n: int) -> list[dict[str, Any]]:
 MEDALS = {1: "\U0001F947", 2: "\U0001F948", 3: "\U0001F949"}  # gold / silver / bronze
 
 
-def build_message(top_rows: list[dict[str, Any]], cfg: dict[str, Any]) -> str:
-    today = datetime.now(timezone.utc).strftime("%A, %b %d %Y")
+def build_message(
+    top_rows: list[dict[str, Any]],
+    cfg: dict[str, Any],
+    today: date | None = None,
+) -> str:
+    if today is None:
+        offset_h = cfg.get("timezone_offset_hours", DEFAULT_TZ_OFFSET_HOURS)
+        tz = timezone(timedelta(hours=offset_h))
+        today = datetime.now(tz).date()
+
+    today_display = today.strftime("%A, %b %d %Y")
     title = cfg.get("channel_title", "Top Forex Copiers")
     top_n = len(top_rows)
 
     lines = [
         f"<b>\U0001F3C6 {escape_html(title)} \u2014 Top {top_n}</b>",
-        f"<i>{escape_html(today)} UTC</i>",
+        f"<i>{escape_html(today_display)}</i>",
         "",
     ]
 
@@ -268,8 +325,13 @@ def main() -> None:
         print("No data rows found in sheet. Nothing to post.")
         return
 
+    rows, today = filter_to_today(rows, cfg)
+    if not rows:
+        print(f"No rows for today ({today.isoformat()}). Nothing to post.")
+        return
+
     top_rows = select_top(rows, top_n)
-    message = build_message(top_rows, cfg)
+    message = build_message(top_rows, cfg, today=today)
 
     if args.dry_run:
         print("---- DRY RUN ----")
