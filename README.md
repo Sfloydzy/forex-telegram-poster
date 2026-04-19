@@ -1,19 +1,62 @@
 # Forex Copier Rankings → Telegram Poster
 
-A small Python program that reads a Google Sheet of MT4/MT5 copier performance
-and posts the top-ranked copiers to a Telegram channel. Designed to run on your
-computer now and move to a scheduler (cron, Task Scheduler, GitHub Actions,
-Cowork schedule) later without code changes.
+A small Python program that reads a Google Sheet of MT4/MT5 copier
+performance, filters to today's rows, and posts the top 5 ranked copiers
+to a Telegram channel as formatted "cards".
 
-The sheet must have these columns (header row, in any order, case-insensitive):
+**Status:** Live. Hosted on GitHub Actions, scheduled at **08:00 Singapore
+time daily** (`0 0 * * *` UTC). No local machine required for posting —
+your laptop can be off.
 
-    Rank | Copier | Net P&L ($) | Win rate | Wins | Losses | Total trades
+- Repo: `Sfloydzy/forex-telegram-poster` (private)
+- Workflow: `.github/workflows/daily.yml`
+- Cloud setup walkthrough: see `GITHUB_SETUP.md`
 
 ---
 
-## 1. Install Python dependencies
+## Sheet schema
 
-From this folder, in a terminal:
+The Google Sheet must have a header row with these columns (header text is
+matched case-insensitively, in any order, and a few aliases are accepted):
+
+    Date | Rank | Copier | Net P&L ($) | Win rate | Wins | Losses | Total trades
+
+- `Date` — required for filtering. Format `YYYY-MM-DD` is preferred; the
+  script also accepts `DD/MM/YYYY`, `MM/DD/YYYY`, `1 Jan 2026`, etc.
+- `Rank` — integer. Used to order the rows; falls back to ordering by
+  `Net P&L` descending if Rank is empty/zero.
+- `Net P&L ($)` — display string like `$1,234.56` or `-$42`. Sign is
+  detected for the up/down arrow on the post.
+- `Win rate` — display string like `78%` or `78.5%`.
+- `Wins` / `Losses` / `Total trades` — integers (display strings).
+
+If the sheet has additional columns the script ignores them.
+
+## What it posts
+
+For each scheduled run the script:
+
+1. Fetches all rows from the Rankings tab.
+2. Filters to rows whose `Date` matches **today in Singapore time** (UTC+8).
+3. Sorts the remaining rows by `Rank` (or by `Net P&L` desc if Rank is empty).
+4. Takes the top `top_n` (default **5**) and posts them as formatted cards
+   with gold/silver/bronze emojis on the top 3 and a red-arrow indicator
+   for negative P&L.
+
+If there are no rows for today, nothing is posted (the runner logs a
+"No rows for today" message and exits cleanly).
+
+---
+
+## Local development
+
+You only need this section if you want to run the script on your own
+machine — to dry-run formatting changes, seed test data, or debug. The
+production schedule runs in the cloud and doesn't depend on local setup.
+
+### Install dependencies
+
+From this folder:
 
     python -m venv .venv
     # Windows:
@@ -23,138 +66,134 @@ From this folder, in a terminal:
 
     pip install -r requirements.txt
 
-## 2. Create a Google service account (one-time, ~5 min)
+### Configure
 
-1. Go to https://console.cloud.google.com/ and sign in with the Google account
-   that owns the sheet.
-2. Create a new project (top bar → "New Project"), name it anything.
-3. In the search bar, find **"Google Sheets API"** and click **Enable**. Do the
-   same for **"Google Drive API"**.
-4. Go to **APIs & Services → Credentials → Create Credentials → Service
-   Account**. Give it a name (e.g. `forex-poster`). No roles needed, just
-   click **Done**.
-5. Click the service account you just made → **Keys** tab → **Add Key → Create
-   new key → JSON**. A file downloads. Rename it to `service_account.json`
-   and put it **in this folder**.
-6. Open the JSON and copy the `client_email` (looks like
-   `forex-poster@your-project.iam.gserviceaccount.com`).
-7. Open your Google Sheet → **Share** → paste that email → give **Viewer**
-   access. This is what lets the bot read your sheet.
-
-## 3. Get the Google Sheet ID and tab name
-
-The sheet URL looks like:
-
-    https://docs.google.com/spreadsheets/d/THIS_IS_THE_SHEET_ID/edit#gid=0
-
-Copy the `THIS_IS_THE_SHEET_ID` part.
-
-The tab name is whatever is shown on the tab at the bottom of the sheet (e.g.
-`Sheet1`, `Rankings`).
-
-## 4. Get your Telegram channel ID
-
-You already have a bot token — good. The bot needs to be an **admin** of the
-channel you want to post to (Channel settings → Administrators → Add Admin →
-search for your bot by username).
-
-For the chat ID you have two options:
-
-- **Public channel**: use `@your_channel_username` (including the `@`).
-- **Private channel**: you need the numeric ID (looks like `-1001234567890`).
-  Fastest way: add `@getidsbot` to the channel temporarily, it will DM you the
-  ID, then remove it.
-
-## 5. Fill in config.json
-
-Copy the template:
+Copy the template and fill in your values:
 
     # Windows
     copy config.example.json config.json
     # macOS / Linux
     cp config.example.json config.json
 
-Open `config.json` and fill in:
+`config.json`:
 
     {
-      "telegram_bot_token": "123456789:ABC...",          # from BotFather
-      "telegram_chat_id": "@my_forex_channel",            # or -100...
-      "google_sheet_id": "1AbCdEf...",                    # from step 3
-      "google_sheet_tab": "Sheet1",                       # tab name
+      "telegram_bot_token": "123456789:ABC...",         // from @BotFather
+      "telegram_chat_id": "-1001234567890",              // numeric or @username
+      "google_sheet_id": "1AbCdEf...",                   // from sheet URL
+      "google_sheet_tab": "Rankings",                    // tab name
       "service_account_path": "./service_account.json",
       "top_n": 5,
-      "channel_title": "Top Forex Copiers"
+      "channel_title": "Top Forex Copiers",
+      "timezone_offset_hours": 8                         // optional; default 8 (SGT)
     }
 
-`config.json` and `service_account.json` are both in `.gitignore` so you don't
-accidentally commit them.
+`config.json` and `service_account.json` are both in `.gitignore`.
 
-## 6. Dry run — preview without posting
+### Run
 
-    python post_rankings.py --dry-run
+    python post_rankings.py --dry-run    # preview the message, nothing posts
+    python post_rankings.py              # post the top 5 to Telegram
+    python post_rankings.py --top 10     # override top-N for one run
 
-This prints the formatted message to your terminal so you can check the top 5
-look right. If the output looks good, you're ready to post live.
+### How config is loaded
 
-## 7. Run it for real
+If `config.json` is present, it's used. Otherwise the script reads the
+following environment variables (this is what GitHub Actions uses):
 
-    python post_rankings.py
+- `TELEGRAM_BOT_TOKEN`
+- `TELEGRAM_CHAT_ID`
+- `GOOGLE_SHEET_ID`
+- `GOOGLE_SHEET_TAB`
+- `GOOGLE_SERVICE_ACCOUNT_JSON` — full JSON content of the service account key
+- `TOP_N` (optional, default `5`)
+- `CHANNEL_TITLE` (optional, default `Top Forex Copiers`)
 
-Check the Telegram channel — a new ranked post should appear. On success the
-script prints `Posted successfully. message_id=...`.
+So the same script runs identically on your laptop and on the GitHub runner.
 
-## 8. Schedule it daily (future iteration)
+---
 
-Since you're running on your own computer for now, here are the options for
-when you're ready to automate. No code changes needed — all options just run
-`python post_rankings.py` on a schedule.
+## Cloud scheduler (already set up)
 
-### Option A — Windows Task Scheduler
+The GitHub Actions workflow at `.github/workflows/daily.yml`:
 
-1. Open Task Scheduler → Create Basic Task → "Post Forex Rankings".
-2. Trigger: Daily, pick the time.
-3. Action: Start a program.
-   - Program: `C:\path\to\forex-telegram-poster\.venv\Scripts\python.exe`
-   - Arguments: `post_rankings.py`
-   - Start in: `C:\path\to\forex-telegram-poster`
+- Runs `0 0 * * *` UTC daily (08:00 Singapore, year-round, no DST).
+- Can also be triggered on demand via `workflow_dispatch` with optional
+  `top_n` and `dry_run` inputs.
+- Reads the five secrets above from the repo's encrypted secret store.
+- Forces JavaScript actions onto Node.js 24 (via
+  `FORCE_JAVASCRIPT_ACTIONS_TO_NODE24=true`) to silence the Node 20
+  deprecation warning.
 
-### Option B — macOS / Linux cron
+To trigger a manual test run from your terminal:
 
-Edit your crontab (`crontab -e`) and add, for example, 9:00am daily:
+    gh workflow run "Daily Forex Rankings Post" -f dry_run=true
+    gh run watch
 
-    0 9 * * * cd /path/to/forex-telegram-poster && .venv/bin/python post_rankings.py >> poster.log 2>&1
+To trigger a real post:
 
-### Option C — GitHub Actions (cloud, always-on)
+    gh workflow run "Daily Forex Rankings Post" -f dry_run=false
 
-Push this folder (minus `config.json` and `service_account.json`) to a private
-GitHub repo. Store the secrets as repository secrets. Add a workflow at
-`.github/workflows/daily.yml` that runs on a schedule and calls the script —
-happy to generate this when you're ready.
+For full setup instructions (creating secrets, rotating credentials,
+changing the schedule), see `GITHUB_SETUP.md`.
 
-### Option D — Cowork scheduled task
+---
 
-Ask me to "schedule this to run daily at 9am" inside Cowork once you've
-confirmed the script works locally.
+## Initial Google service account setup
+
+Only needed once, when the project is first created. If you're working with
+an existing repo, the secrets and sharing are already in place — skip this
+section.
+
+1. Go to https://console.cloud.google.com/ and sign in with the Google
+   account that owns the sheet.
+2. Create a new project, then enable both **Google Sheets API** and
+   **Google Drive API**.
+3. **APIs & Services → Credentials → Create Credentials → Service Account**.
+4. Click into the new service account → **Keys → Add Key → JSON**. A file
+   downloads. Rename it to `service_account.json` and put it in this folder.
+5. Open the JSON, copy the `client_email`, then **Share** the Google Sheet
+   with that email — Viewer is enough for the production script (Editor
+   only if you also want to write back from your local machine).
+
+## Telegram bot setup
+
+1. Talk to `@BotFather` on Telegram, `/newbot`, save the token.
+2. Add the bot to your channel as an **Administrator** with at least
+   "Post Messages" permission.
+3. To get a private channel's numeric ID, temporarily add `@getidsbot`
+   to the channel — it'll DM you the ID. Then remove it.
 
 ---
 
 ## Troubleshooting
 
-- **`Missing config.json`** — you haven't copied `config.example.json` yet.
-- **`Sheet is missing expected columns`** — the header row in your sheet
-  doesn't match. Make sure the exact text (or a listed alias) is there:
-  `Rank`, `Copier`, `Net P&L ($)`, `Win rate`, `Wins`, `Losses`, `Total trades`.
-- **`gspread.exceptions.APIError: ... 403`** — you forgot to share the sheet
-  with the service account's `client_email`.
+- **`Sheet is missing required columns`** — the header row doesn't match.
+  Check it has `Rank`, `Copier`, `Net P&L ($)`, `Win rate`, `Wins`,
+  `Losses`, `Total trades` (Date is optional but recommended).
+- **`No rows for today`** — the date filter found zero rows for today's
+  Singapore date. Either today's rows aren't in the sheet yet, or their
+  `Date` cells are in an unparseable format.
+- **`gspread.exceptions.APIError: ... 403`** — you forgot to share the
+  sheet with the service account's `client_email`.
 - **`Telegram API error: ... chat not found`** — bot isn't an admin of the
   channel, or the `telegram_chat_id` is wrong.
-- **`Forbidden: bot is not a member`** — add the bot to the channel as admin
-  with "Post Messages" permission.
+- **`Forbidden: bot is not a member`** — add the bot to the channel as
+  admin with "Post Messages" permission.
+- **GitHub Actions schedule didn't fire** — GitHub may delay scheduled
+  runs by several minutes under load. Check the Actions tab. Also note
+  that scheduled workflows on inactive repos (no commits in 60 days)
+  get auto-disabled — push a small commit periodically to keep the
+  schedule alive, or use `workflow_dispatch` to verify it's still active.
 
-## Files in this project
+## Files
 
 - `post_rankings.py` — the script.
-- `config.example.json` — template config, copy to `config.json`.
-- `requirements.txt` — Python dependencies.
-- `.gitignore` — keeps secrets out of git.
+- `config.example.json` — config template (copy to `config.json` for local
+  use).
+- `requirements.txt` — Python dependencies (`gspread`, `google-auth`,
+  `requests`).
+- `.github/workflows/daily.yml` — GitHub Actions scheduler.
+- `.gitignore` — keeps `config.json` and `service_account.json` out of git.
+- `GITHUB_SETUP.md` — full walkthrough for the cloud scheduler.
 - `README.md` — this file.
