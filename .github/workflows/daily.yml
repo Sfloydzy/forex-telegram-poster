@@ -2,9 +2,12 @@ name: Daily Forex Rankings Post
 
 on:
   schedule:
-    # 00:00 UTC = 08:00 Singapore (SGT, UTC+8). Runs every day.
-    # Note: GitHub may delay scheduled runs by a few minutes under load.
-    - cron: "0 0 * * *"
+    # 00:07 UTC = 08:07 Singapore (SGT, UTC+8). Runs every day.
+    # We avoid on-the-hour cron times like "0 0 * * *" because GitHub Actions
+    # gets heavily congested at round-number times and delays scheduled runs
+    # by tens of minutes to hours. An off-minute cron reliably lands within
+    # ~5 min of the target time.
+    - cron: "7 0 * * *"
 
   # Lets you trigger the workflow by hand from the Actions tab — good for testing.
   workflow_dispatch:
